@@ -1,23 +1,26 @@
 #include <stdlib.h>
-#include "stdio.h"
+#include <stdio.h>
 #include "pico/cyw43_arch.h"
-#include "tusb.h"
-#include "bsp/board_api.h"
-#include "usb_descriptors.h"
 
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
 
-// UART defines
-// By default the stdout UART is `uart0`, so we will use the second one
-#define UART_ID uart1
-#define BAUD_RATE 115200
+/* Blink pattern
+ * - 250 ms  : device not mounted
+ * - 1000 ms : device mounted
+ * - 2500 ms : device is suspended
+ */
+enum  {
+  BLINK_NOT_MOUNTED = 250,
+  BLINK_MOUNTED = 1000,
+  BLINK_SUSPENDED = 2500,
+};
 
-// Use pins 4 and 5 for UART1
-// Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
-#define UART_TX_PIN 4
-#define UART_RX_PIN 5
+static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+
+void led_blinking_task(void);
+void hid_task(void);
 
 // Apparently this is by GPIO and not Pin, which ofc are different
 // because why not.
@@ -62,32 +65,17 @@ uint read_pin(uint pin) {
     return dat;
 }
 
-
-void send_hid_report(uint32_t btn) {
-    // if (!tud_hid_ready()) return;
-    static bool has_keyboard_key = false;
-
-    if (btn) {
-        uint8_t keycode[6] = {0};
-        // keycode[0] = HID_KEY_A;
-        
-        // tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-        has_keyboard_key = true;
-    } else {
-        // if (has_keyboard_key) tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, NULL);
-        has_keyboard_key = false;
-    }
-}
-
 int main()
 {
     // initialise tinyUSB
 
     board_init();
-    tusb_init();
-    board_init_after_tusb();
+    tud_init(BOARD_TUD_RHPORT);
+    if (board_init_after_tusb){
+        board_init_after_tusb();
+    }
 
-    stdio_init_all();
+    // stdio_init_all();
 
     // Initialise the Wi-Fi chip
     if (cyw43_arch_init()) {
@@ -99,14 +87,10 @@ int main()
 
     while (true) {
         tud_task();
-        gpio_put(COLUMNS[0], 1);
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-        if (read_pin(ROWS[0])) {
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-        } 
-        sleep_ms(100);
+        hid_task();
     }
 }
+
 //--------------------------------------------------------------------+
 // Device callbacks
 //--------------------------------------------------------------------+
@@ -244,7 +228,7 @@ void hid_task(void)
   start_ms += interval_ms;
 
     gpio_put(COLUMNS[0], 1);
-    uint32_t const btn = read_pin(ROWS[0]); 
+    uint32_t const btn = read_pin(ROWS[0]);
   // Remote wakeup
   if ( tud_suspended() && btn )
   {
@@ -318,4 +302,23 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
       }
     }
   }
+}
+
+//--------------------------------------------------------------------+
+// BLINKING TASK
+//--------------------------------------------------------------------+
+void led_blinking_task(void)
+{
+  static uint32_t start_ms = 0;
+  static bool led_state = false;
+
+  // blink is disabled
+  if (!blink_interval_ms) return;
+
+  // Blink every interval ms
+  if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
+  start_ms += blink_interval_ms;
+
+  board_led_write(led_state);
+  led_state = 1 - led_state; // toggle
 }
