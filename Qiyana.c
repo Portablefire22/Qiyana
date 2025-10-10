@@ -1,7 +1,9 @@
-#include <stdio.h>
-#include "pico/stdlib.h"
+#include <stdlib.h>
+#include "stdio.h"
 #include "pico/cyw43_arch.h"
-#include "hardware/uart.h"
+#include "tusb.h"
+#include "bsp/board_api.h"
+#include "usb_descriptors.h"
 
 
 // UART defines
@@ -13,8 +15,6 @@
 // Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
 #define UART_TX_PIN 4
 #define UART_RX_PIN 5
-
-
 
 // Apparently this is by GPIO and not Pin, which ofc are different
 // because why not.
@@ -59,8 +59,31 @@ uint read_pin(uint pin) {
     return dat;
 }
 
+
+void send_hid_report(uint32_t btn) {
+    // if (!tud_hid_ready()) return;
+    static bool has_keyboard_key = false;
+
+    if (btn) {
+        uint8_t keycode[6] = {0};
+        // keycode[0] = HID_KEY_A;
+        
+        // tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
+        has_keyboard_key = true;
+    } else {
+        // if (has_keyboard_key) tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, NULL);
+        has_keyboard_key = false;
+    }
+}
+
 int main()
 {
+    // initialise tinyUSB
+
+    board_init();
+    tusb_init();
+    board_init_after_tusb();
+
     stdio_init_all();
 
     // Initialise the Wi-Fi chip
@@ -72,6 +95,7 @@ int main()
     init_pins();
 
     while (true) {
+        tud_task();
         gpio_put(COLUMNS[0], 1);
             cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
         if (read_pin(ROWS[0])) {
