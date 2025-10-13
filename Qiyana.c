@@ -5,6 +5,7 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "config/keys.h"
 
 /* Blink pattern
  * - 250 ms  : device not mounted
@@ -17,9 +18,7 @@ enum  {
   BLINK_SUSPENDED = 2500,
 };
 
-#define RowCount 6
-#define ColumnCount 17
-#define QueueMax 32
+#define QueueMax 6
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
@@ -37,22 +36,17 @@ static const uint16_t COLUMNS[ColumnCount] = {0, 1, 2, 3,
                          8, 9, 10, 11, 
                          12, 13, 14, 15, 16};
 
-// Holds keycodes in corresponding to their key position.
-static uint32_t KeyMap[RowCount * ColumnCount];
-
 static uint32_t Queue[QueueMax];
 
 /// @brief Init all defined ROWS and COLUMNS pins, setting all 
 /// COLUMNS pins to be pulled down and output low.
 void init_pins() {
-    int rowNum = sizeof(ROWS)/sizeof(ROWS[0]);
-    for (int i = 0; i < rowNum; i++) {
+    for (int i = 0; i < RowCount; i++) {
         gpio_init(ROWS[i]);
         gpio_pull_down(ROWS[i]);
         gpio_set_dir(ROWS[i], GPIO_IN);
     }
-    int colNum = sizeof(COLUMNS)/sizeof(COLUMNS[0]);
-    for (int i = 0; i < colNum; i++) {
+    for (int i = 0; i < ColumnCount; i++) {
         uint col = COLUMNS[i];
         gpio_init(col);
         gpio_set_dir(col, GPIO_OUT);
@@ -79,10 +73,17 @@ void read_all_pins() {
     gpio_put(COLUMNS[column], 1);
     for (int row = 0; row < RowCount; row++) {
       if (!read_pin(ROWS[row])) continue;
-      Queue[queuePos++] = KeyMap[row + (column * ColumnCount)];
-      if (queuePos > QueueMax) return;
+      Queue[queuePos++] = Keymap[(ColumnCount * row) + column];
+      if (queuePos > QueueMax) {
+        gpio_put(COLUMNS[column], 0);
+        return;
+      }
     }
     gpio_put(COLUMNS[column], 0);
+    // We can't check too quickly because the previous column will still have power 
+    // for the first two rows.
+    // Yes, this is a problem that bewilders me.
+    sleep_us(1);
   }
   Queue[queuePos] = HID_KEY_NONE;
 }
@@ -113,6 +114,7 @@ int main()
         tud_task();
         read_all_pins();
         hid_task();
+        led_blinking_task();
     }
 }
 
@@ -165,8 +167,13 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
 
       if ( btn )
       {
-        uint8_t keycode[6] = { 0 };
-        keycode[0] = HID_KEY_A;
+
+        uint8_t keycode[QueueMax] = { 0 };
+        for (int i = 0; i < QueueMax; i++) {
+          keycode[i] = Queue[i];
+          Queue[i] = HID_KEY_NONE;
+          if (keycode[i] == HID_KEY_NONE) break;
+        }
 
         tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
         has_keyboard_key = true;
@@ -192,20 +199,16 @@ void hid_task(void)
 
   if ( board_millis() - start_ms < interval_ms) return; // not enough time
   start_ms += interval_ms;
-
-  for (int i = 0; i < QueueMax; i++) {
-    uint32_t key = Queue[i];
-    if (key == 0x0) break; // Early end of Queue is marked with 0x00;
-    // Remote wakeup
-    if ( tud_suspended() && key)
-    {
-      // Wake up host if we are in suspend mode
-      // and REMOTE_WAKEUP feature is enabled by host
-      tud_remote_wakeup();
-    }else
-    {
-      send_hid_report(REPORT_ID_KEYBOARD, key);
-    }
+  uint32_t key = Queue[0];
+  // Remote wakeup
+  if ( tud_suspended() && key)
+  {
+    // Wake up host if we are in suspend mode
+    // and REMOTE_WAKEUP feature is enabled by host
+    tud_remote_wakeup();
+  }else
+  {
+    send_hid_report(REPORT_ID_KEYBOARD, key);
   }
 }
 
