@@ -17,6 +17,10 @@ enum  {
   BLINK_SUSPENDED = 2500,
 };
 
+#define RowCount 6
+#define ColumnCount 17
+#define QueueMax 32
+
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
 void led_blinking_task(void);
@@ -24,15 +28,19 @@ void hid_task(void);
 
 // Apparently this is by GPIO and not Pin, which ofc are different
 // because why not.
-
 // Matrix Row GPIO in order 1 - 6
-const int ROWS[6] = {17, 18, 19, 20, 21, 22};
+static const uint16_t ROWS[RowCount] = {17, 18, 19, 20, 21, 22};
 
 // Matrix column GPIO
-const int COLUMNS[17] = {0, 1, 2, 3, 
+static const uint16_t COLUMNS[ColumnCount] = {0, 1, 2, 3, 
                          4, 5 ,6 ,7, 
                          8, 9, 10, 11, 
                          12, 13, 14, 15, 16};
+
+// Holds keycodes in corresponding to their key position.
+static uint32_t KeyMap[RowCount * ColumnCount];
+
+static uint32_t Queue[QueueMax];
 
 /// @brief Init all defined ROWS and COLUMNS pins, setting all 
 /// COLUMNS pins to be pulled down and output low.
@@ -65,6 +73,20 @@ uint read_pin(uint pin) {
     return dat;
 }
 
+void read_all_pins() {
+  int queuePos = 0;
+  for (int column = 0; column < ColumnCount; column++) {
+    gpio_put(COLUMNS[column], 1);
+    for (int row = 0; row < RowCount; row++) {
+      if (!read_pin(ROWS[row])) continue;
+      Queue[queuePos++] = KeyMap[row + (column * ColumnCount)];
+      if (queuePos > QueueMax) return;
+    }
+    gpio_put(COLUMNS[column], 0);
+  }
+  Queue[queuePos] = HID_KEY_NONE;
+}
+
 int main()
 {
     // initialise tinyUSB
@@ -75,18 +97,21 @@ int main()
         board_init_after_tusb();
     }
 
-    // stdio_init_all();
-
     // Initialise the Wi-Fi chip
     if (cyw43_arch_init()) {
         printf("Wi-Fi init failed\n");
         return -1;
     }
 
+    for (int i = 0; i < QueueMax; i++) {
+      Queue[i] = HID_KEY_NONE;
+    }
+
     init_pins();
 
     while (true) {
         tud_task();
+        read_all_pins();
         hid_task();
     }
 }
@@ -168,18 +193,19 @@ void hid_task(void)
   if ( board_millis() - start_ms < interval_ms) return; // not enough time
   start_ms += interval_ms;
 
-    gpio_put(COLUMNS[0], 1);
-    uint32_t const btn = read_pin(ROWS[0]);
-  // Remote wakeup
-  if ( tud_suspended() && btn )
-  {
-    // Wake up host if we are in suspend mode
-    // and REMOTE_WAKEUP feature is enabled by host
-    tud_remote_wakeup();
-  }else
-  {
-    // Send the 1st of report chain, the rest will be sent by tud_hid_report_complete_cb()
-    send_hid_report(REPORT_ID_KEYBOARD, btn);
+  for (int i = 0; i < QueueMax; i++) {
+    uint32_t key = Queue[i];
+    if (key == 0x0) break; // Early end of Queue is marked with 0x00;
+    // Remote wakeup
+    if ( tud_suspended() && key)
+    {
+      // Wake up host if we are in suspend mode
+      // and REMOTE_WAKEUP feature is enabled by host
+      tud_remote_wakeup();
+    }else
+    {
+      send_hid_report(REPORT_ID_KEYBOARD, key);
+    }
   }
 }
 
