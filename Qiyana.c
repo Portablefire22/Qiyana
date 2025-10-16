@@ -153,40 +153,17 @@ void tud_resume_cb(void)
 // USB HID
 //--------------------------------------------------------------------+
 
-static void send_hid_report(uint8_t report_id, uint32_t btn)
+static void send_hid_report()
 {
   // skip if hid is not ready yet
   if ( !tud_hid_ready() ) return;
-
-  switch(report_id)
-  {
-    case REPORT_ID_KEYBOARD:
-    {
-      // use to avoid send multiple consecutive zero report for keyboard
-      static bool has_keyboard_key = false;
-
-      if ( btn )
-      {
-
-        uint8_t keycode[QueueMax] = { 0 };
-        for (int i = 0; i < QueueMax; i++) {
-          keycode[i] = Queue[i];
-          Queue[i] = HID_KEY_NONE;
-          if (keycode[i] == HID_KEY_NONE) break;
-        }
-
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-        has_keyboard_key = true;
-      }else
-      {
-        // send empty key report if previously has key pressed
-        if (has_keyboard_key) tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, NULL);
-        has_keyboard_key = false;
-      }
-    }
-    break;
-    default: break;
+  uint8_t keycode[QueueMax] = { 0 };
+  for (int i = 0; i < QueueMax; i++) {
+    keycode[i] = Queue[i];
+    Queue[i] = HID_KEY_NONE;
+    if (keycode[i] == HID_KEY_NONE) break;
   }
+  tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
 }
 
 // Every 10ms, we will sent 1 report for each HID profile (keyboard, mouse etc ..)
@@ -199,16 +176,15 @@ void hid_task(void)
 
   if ( board_millis() - start_ms < interval_ms) return; // not enough time
   start_ms += interval_ms;
-  uint32_t key = Queue[0];
   // Remote wakeup
-  if ( tud_suspended() && key)
+  if ( tud_suspended() && Queue[0])
   {
     // Wake up host if we are in suspend mode
     // and REMOTE_WAKEUP feature is enabled by host
     tud_remote_wakeup();
   }else
   {
-    send_hid_report(REPORT_ID_KEYBOARD, key);
+    send_hid_report();
   }
 }
 
